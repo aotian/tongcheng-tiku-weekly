@@ -35,7 +35,8 @@ export function apply(ctx) {
       '',
       '- 先 `tiku_weekly_status`；未登录时请老师在插件面板登录，不要代填密码。',
       '- 写操作一律先 `tiku_weekly_dry_run` 给老师看清单，老师确认后再 `tiku_weekly_execute`。',
-      '- 失败时用 `tiku_weekly_retry` 单步重试，不要整批重跑。',
+      '- 原卷录入并单生定向发布：用 `tiku_weekly_paper_ingest` 生成草稿（不写正式题库），用 `tiku_weekly_paper_get` / `tiku_weekly_paper_edit` / `tiku_weekly_paper_split` / `tiku_weekly_paper_merge` / `tiku_weekly_paper_student` 与面板共享校对，确认前必须先调用 `tiku_weekly_paper_preview` 展示试卷标题、题数、班级、学生与「接收人数：1」，老师明确确认后再调用 `tiku_weekly_paper_execute`。若对话取不到上传附件，引导老师在面板「⓪ 原卷录入与单生定向」选择文件，再由对话接着操作同一草稿。',
+      '- 失败时用 `tiku_weekly_retry` 或重新调用 `tiku_weekly_paper_execute` 断点续做，不要整批重跑。',
       `- 可视化界面在 ${PAGE_PATH}（DSH 侧边栏「每周课程」入口可直接打开）。`,
     ].join('\n'),
   });
