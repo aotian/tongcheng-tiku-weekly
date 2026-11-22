@@ -6,10 +6,28 @@ on:
       - main
     tags:
       - 'v*'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
+  test:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node test/contract.mjs
+      - run: node test/paper-intake.mjs
+      - run: node --test test/updater.mjs
+
   sync-gitee:
+    if: github.event_name != 'pull_request'
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout with full history
@@ -30,6 +48,7 @@ jobs:
           git push gitee --tags
 
   pack-tag:
+    needs: test
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

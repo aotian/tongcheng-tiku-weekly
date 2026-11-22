@@ -12,6 +12,15 @@ window.__ModuleLoader__.load({
     const PAGE_PATH = '/tiku-weekly';
 
     const zh = {
+      checkUpdate: "检查更新",
+      newVersion: "发现新版本",
+      applyUpdate: "一键更新",
+      copyUpdate: "复制 Gitee 更新地址",
+      copied: "已复制更新地址",
+      restart: "已安装更新，请重启 DSH 生效。",
+      upToDate: "已是最新版本",
+      manual: "当前安装位置需手动更新",
+
       panel: '每周课程',
       title: '童澄每周课程发布',
       subtitle: '原卷录入校对、建课、课件、绑题与单生定向作业，对话与界面共用同一份草稿。',
@@ -39,6 +48,15 @@ window.__ModuleLoader__.load({
     };
 
     const en = {
+      checkUpdate: "Check for updates",
+      newVersion: "Update available",
+      applyUpdate: "Update now",
+      copyUpdate: "Copy Gitee URL",
+      copied: "Update URL copied",
+      restart: "Update installed. Restart DSH to activate it.",
+      upToDate: "Up to date",
+      manual: "Update this installation manually",
+
       panel: 'Weekly courses',
       title: 'Tongcheng weekly course publishing',
       subtitle: 'Paper intake & proofreading, courseware, questions, and targeted homework sharing one draft.',
@@ -138,6 +156,28 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = React.useState({ kind: 'loading' });
       const [paperDraft, setPaperDraft] = React.useState(null);
       const [error, setError] = React.useState(null);
+
+      const [update, setUpdate] = React.useState(null);
+      const [updateBusy, setUpdateBusy] = React.useState(false);
+      const [updateNote, setUpdateNote] = React.useState('');
+      const runUpdate = React.useCallback(async (apply, silent = false) => {
+        setUpdateBusy(true);
+        setUpdateNote('');
+        try {
+          const response = await fetch('/tiku-weekly/api/update/' + (apply ? 'apply' : 'check'), {
+            method: apply ? 'POST' : 'GET', cache: 'no-store',
+            headers: apply ? { 'X-Tiku-Update': '1' } : {},
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.message || response.statusText);
+          setUpdate(result);
+          if (result.restartRequired) setUpdateNote(t('restart'));
+          else if (!result.hasUpdate && !silent) setUpdateNote(t('upToDate'));
+        } catch (cause) {
+          if (!silent) setUpdateNote(String(cause.message || cause));
+        } finally { setUpdateBusy(false); }
+      }, [t]);
+      React.useEffect(() => { void runUpdate(false, true); }, [runUpdate]);
 
       const load = React.useCallback(() => {
         setStatus({ kind: 'loading' });
@@ -258,6 +298,9 @@ window.__ModuleLoader__.load({
           h('p', { key: 'sub', className: 'tkW_sub' }, t('subtitle')),
         ]),
         h('div', { key: 'bar', className: 'tkW_bar' }, [
+          h('span', { key: 'version', className: 'tkW_pill' }, 'v' + (update?.currentVersion || status.body?.currentVersion || '…')),
+          h('button', { key: 'check', type: 'button', className: 'tkW_btn', disabled: updateBusy || update?.restartRequired,
+            onClick: () => runUpdate(false) }, t('checkUpdate')),
           loggedIn
             ? h('span', { key: 'who', className: 'tkW_pill tkW_pillOk' }, `${who ?? ''} · ${roleLabel(session?.role)}`)
             : h('span', { key: 'who', className: 'tkW_pill tkW_pillMuted' }, status.kind === 'loading' ? t('loading') : t('statusIdle')),
@@ -272,6 +315,16 @@ window.__ModuleLoader__.load({
             h('button', { key: 'open', type: 'button', className: 'tkW_btn tkW_btnPrimary', onClick: () => openWizard(paperDraft ? 'p0' : '') }, t('openWizard')),
           ]),
         ]),
+        update?.hasUpdate && h('div', { className: 'tkW_bar' },
+          h('span', null, t('newVersion') + ' · v' + update.latestVersion),
+          h('button', { type: 'button', className: 'tkW_btn tkW_btnPrimary', disabled: updateBusy || !update.canAutoUpdate,
+            onClick: () => runUpdate(true) }, t('applyUpdate')),
+          !update.canAutoUpdate && h('span', { className: 'tkW_hint' }, t('manual')),
+          h('button', { type: 'button', className: 'tkW_btn', onClick: async () => {
+            try { await navigator.clipboard.writeText(update.repoUrl); setUpdateNote(t('copied')); }
+            catch { setUpdateNote(update.repoUrl); }
+          } }, t('copyUpdate'))),
+        updateNote && h('p', { role: 'status', className: 'tkW_hint' }, updateNote),
         error ? h('p', { key: 'err', className: 'tkW_err' }, error) : null,
         h('p', { key: 'hint', className: 'tkW_hint' }, t('openWizardHint')),
         h(
