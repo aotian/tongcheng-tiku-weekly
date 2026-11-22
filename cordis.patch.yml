@@ -1,0 +1,4 @@
+- insert:
+    - id: tiku-weekly
+      name: 'tongcheng-tiku-weekly'
+      config: {}

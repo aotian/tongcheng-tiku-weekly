@@ -1,0 +1,51 @@
+name: Sync to Gitee & Pack Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  sync-gitee:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Mirror push to Gitee
+        if: ${{ secrets.GITEE_REPO_URL != '' && secrets.GITEE_TOKEN != '' }}
+        env:
+          GITEE_REPO_URL: ${{ secrets.GITEE_REPO_URL }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_USER: ${{ secrets.GITEE_USER }}
+        run: |
+          AUTH_URL="${GITEE_REPO_URL/https:\/\//https://${GITEE_USER:-oauth2}:${GITEE_TOKEN}@}"
+          git remote add gitee "$AUTH_URL"
+          git push gitee main --force
+          git push gitee --tags --force
+
+  pack-tag:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run contract tests
+        run: node test/contract.mjs
+      - name: Pack tarball
+        run: npm pack
+      - name: Upload tarball to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: '*.tgz'
