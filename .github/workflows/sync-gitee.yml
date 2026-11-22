@@ -18,16 +18,16 @@ jobs:
           fetch-depth: 0
 
       - name: Mirror push to Gitee
-        if: ${{ secrets.GITEE_REPO_URL != '' && secrets.GITEE_TOKEN != '' }}
         env:
           GITEE_REPO_URL: ${{ secrets.GITEE_REPO_URL }}
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           GITEE_USER: ${{ secrets.GITEE_USER }}
         run: |
+          : "${GITEE_REPO_URL:?missing GITEE_REPO_URL}" "${GITEE_TOKEN:?missing GITEE_TOKEN}" "${GITEE_USER:?missing GITEE_USER}"
           AUTH_URL="${GITEE_REPO_URL/https:\/\//https://${GITEE_USER:-oauth2}:${GITEE_TOKEN}@}"
           git remote add gitee "$AUTH_URL"
-          git push gitee main --force
-          git push gitee --tags --force
+          git push gitee refs/remotes/origin/main:refs/heads/main
+          git push gitee --tags
 
   pack-tag:
     if: startsWith(github.ref, 'refs/tags/v')
