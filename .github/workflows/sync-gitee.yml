@@ -45,7 +45,9 @@ jobs:
           AUTH_URL="${GITEE_REPO_URL/https:\/\//https://${GITEE_USER:-oauth2}:${GITEE_TOKEN}@}"
           git remote add gitee "$AUTH_URL"
           git push gitee refs/remotes/origin/main:refs/heads/main
-          git push gitee --tags
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            git push gitee "$GITHUB_REF:$GITHUB_REF"
+          fi
 
   pack-tag:
     needs: test
