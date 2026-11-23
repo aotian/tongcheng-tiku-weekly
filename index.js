@@ -35,7 +35,7 @@ export function apply(ctx) {
       '',
       '- 先 `tiku_weekly_status`；未登录时请老师在插件面板登录，不要代填密码。',
       '- 写操作一律先 `tiku_weekly_dry_run` 给老师看清单，老师确认后再 `tiku_weekly_execute`。',
-      '- 制作新概念英语 2、数学、化学、英语、语文、Python 课件时，插件已内置童澄全科统一课件模板 v2.1：先用 `tiku_weekly_courseware_templates` 查看支持组件，再用 `tiku_weekly_courseware_generate` 直接生成符合童澄橙主视觉、取正无 TM Logo 且师生双端隔离（学生版隐三珠纯自学、老师版含三珠与讲授备注）的双版 HTML 并自动写入第 ② 步草稿，随后配合 `tiku_weekly_draft` / `tiku_weekly_dry_run` / `tiku_weekly_execute` 完成建课次与双版发布。',
+      '- 制作新概念英语 2、数学、化学、英语、语文、Python 课件时，插件已内置童澄全科统一课件模板 v2.1：无需把课文写死在插件内，直接从老师消息或本地文件读取课文/教案，调用 `tiku_weekly_courseware_generate` 传入完整结构（新概念课建议传 `passageParagraphs` 完整课文听读——无 MP3 自动启用英音合成朗读全文、8–12 个 `words` 自动分页词卡、`grammarSlides` 语法专题、全文 `reciteLines` 自动分页四级背诵、2–3 道 `quickChecks`；理科开启 `includeMathSandbox` / `includeChemSim`；**每科务必填写 `conclusions` 本课结论**），一键生成符合童澄橙主视觉、取正无 TM Logo 且师生双端隔离的双版 HTML 并写入第 ② 步草稿。',
       '- 原卷录入并单生定向发布：用 `tiku_weekly_paper_ingest` 生成草稿（不写正式题库），用 `tiku_weekly_paper_get` / `tiku_weekly_paper_edit` / `tiku_weekly_paper_split` / `tiku_weekly_paper_merge` / `tiku_weekly_paper_student` 与面板共享校对，确认前必须先调用 `tiku_weekly_paper_preview` 展示试卷标题、题数、班级、学生与「接收人数：1」，老师明确确认后再调用 `tiku_weekly_paper_execute`。若对话取不到上传附件，引导老师在面板「⓪ 原卷录入与单生定向」选择文件，再由对话接着操作同一草稿。',
       '- 失败时用 `tiku_weekly_retry` 或重新调用 `tiku_weekly_paper_execute` 断点续做，不要整批重跑。',
       `- 可视化界面在 ${PAGE_PATH}（DSH 侧边栏「每周课程」入口可直接打开）。`,
