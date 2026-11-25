@@ -540,6 +540,82 @@ try {
     );
   });
 
+  await test('7. 知识树自动查询、单题 target_knowledge_id 入库与纯文字几何题不误标缺配图', async () => {
+    // Pure-text geometry problems (Q9/Q10 style) must NOT trigger missing_image
+    assert.deepEqual(
+      computeQuestionFlags({ content: '如果两个相似三角形的面积之比为 16:9，那么它们的周长之比是？', correct_option: '4:3', images: [] }),
+      [],
+    );
+    assert.deepEqual(
+      computeQuestionFlags({ content: '已知长方形的长是 x，宽是长的一半，面积是 y，求 y 关于 x 的解析式。', correct_option: 'y=0.5x^2', images: [] }),
+      [],
+    );
+    // Real visual references must still trigger missing_image
+    assert.ok(
+      computeQuestionFlags({ content: '如图，在 △ABC 中，DE∥BC，求比例值。', correct_option: '1:2', images: [] }).includes('missing_image'),
+    );
+    assert.ok(
+      computeQuestionFlags({ content: '根据图①中的统计图回答下列问题。', correct_option: 'A', images: [] }).includes('missing_image'),
+    );
+
+    const store = new PaperIntakeStore({ rootDir: join(tempRoot, 't7') });
+    const { state, deps } = makeFakeBackend();
+    const fakeNodes = [
+      { id: 101, parent_id: 10, name: '相似三角形', type: 'chapter', level: 3, is_leaf: false, path: ['初中数学', '九年级', '相似三角形'], metadata: { kg_code: 'MATH-9-SIM' } },
+      { id: 102, parent_id: 10, name: '二次函数', type: 'chapter', level: 3, is_leaf: false, path: ['初中数学', '九年级', '二次函数'], metadata: { kg_code: 'MATH-9-QUAD' } },
+      { id: 201, parent_id: 20, name: '宾语从句', type: 'topic', level: 3, is_leaf: true, path: ['初中英语', '九年级', '宾语从句'], metadata: {} },
+    ];
+    const svc = new PaperIntakeService({
+      store,
+      deps: {
+        ...deps,
+        async listKnowledgeNodes() {
+          return fakeNodes;
+        },
+      },
+    });
+
+    const mathNodes = await svc.listKnowledgeNodesRemote('https://tiku.test', 'tok', { subject: '数学', keyword: '相似', onlyWithKgCode: true });
+    assert.equal(mathNodes.totalMatched, 1);
+    assert.equal(mathNodes.nodes[0].id, '101');
+    assert.equal(mathNodes.nodes[0].kgCode, 'MATH-9-SIM');
+    assert.equal(mathNodes.nodes[0].fullPath, '初中数学 / 九年级 / 相似三角形');
+
+    // Tool contract check for tiku_weekly_knowledge_nodes
+    const tools = createTools({
+      knowledgeNodes: (filter) => svc.listKnowledgeNodesRemote('https://tiku.test', 'tok', filter),
+    });
+    const knTool = tools.find((t) => t.name === 'tiku_weekly_knowledge_nodes');
+    assert.ok(knTool, '必须注册 tiku_weekly_knowledge_nodes 工具');
+    const knRes = await knTool.execute({ subject: '数学' });
+    assert.equal(knRes.ok, true);
+    assert.equal(knRes.totalMatched, 2);
+
+    // Per-question target_knowledge_id satisfies previewPublish without paper-level targetKnowledgeId
+    const { draft } = await svc.ingest({
+      host: 'https://tiku.test',
+      token: 'tok',
+      userId: 'teacher-1',
+      title: '按题挂知识点测试卷',
+      subject: 'math',
+      classId: 'cls-sat-math',
+      studentName: '李华',
+      dueDate: '2026-12-06T12:00:00.000Z',
+      questions: [
+        { originalNo: '1', content: '如果两个相似三角形的面积之比为 16:9，求周长比。', correct_option: '4:3', target_knowledge_id: '101' },
+        { originalNo: '2', content: '求二次函数 y = x^2 - 2x 的顶点坐标。', correct_option: '(1,-1)', target_knowledge_id: '102' },
+      ],
+    });
+    const preview = svc.previewPublish('teacher-1', draft.id);
+    assert.equal(preview.blocked.length, 0, '每题都已有 target_knowledge_id 时不应拦截');
+    await svc.executePublish({ host: 'https://tiku.test', token: 'tok', userId: 'teacher-1', draftId: draft.id });
+    assert.deepEqual(
+      state.writtenDrafts[0].drafts.map((d) => d.target_knowledge_id),
+      ['101', '102'],
+      '入库草稿应保留每道题各自的 target_knowledge_id',
+    );
+  });
+
   console.log(`\nAll ${passed} paper-intake & layout checks passed.`);
 } finally {
   rmSync(tempRoot, { recursive: true, force: true });
