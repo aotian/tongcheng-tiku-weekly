@@ -395,6 +395,151 @@ try {
     assert.equal(matchStudentsByName([{ id: '1', full_name: '张小明' }], '张同学').status, 'matched');
   });
 
+  await test('6. 直接传入结构化题目 + 分批追加到同一草稿（跳过服务端二次 AI 解析，自动绑页图，整卷一次发布）', async () => {
+    const store = new PaperIntakeStore({ rootDir: join(tempRoot, 't6') });
+    const { state, deps } = makeFakeBackend();
+    let remoteParseCalls = 0;
+    const wrappedDeps = {
+      ...deps,
+      async parseImportQuestions(payload) {
+        remoteParseCalls += 1;
+        return deps.parseImportQuestions(payload);
+      },
+    };
+    const svc = new PaperIntakeService({ store, deps: wrappedDeps });
+
+    // Batch 1: upload page 1 image + pass Q1 & Q2 directly (no remote AI parse)
+    const batch1 = await svc.ingest({
+      host: 'https://tiku.test',
+      token: 'tok',
+      userId: 'teacher-1',
+      title: '闵行一模数学整卷',
+      subject: 'math',
+      classId: 'cls-sat-math',
+      className: '九年级数学冲刺班',
+      studentName: '李华',
+      dueDate: '2026-12-05T12:00:00.000Z',
+      targetKnowledgeId: 'kp-sim-01',
+      files: [
+        { fileName: 'mock-p1.png', mimeType: 'image/png', bytesBase64: Buffer.from('p1').toString('base64') },
+      ],
+      questions: [
+        {
+          originalNo: '1',
+          sourcePage: 1,
+          type: 'fill-in-blank',
+          content: '计算：$\\frac{1}{2} + \\frac{1}{3} = ?$',
+          correct_option: '5/6',
+          score: 4,
+        },
+        {
+          originalNo: '2',
+          sourcePage: 1,
+          usePageImage: true,
+          type: 'choice',
+          content: '如图，在 $\\triangle ABC$ 中，$DE \\parallel BC$，求比例值。',
+          options: [{ label: 'A', text: '1:2' }, { label: 'B', text: '1:3' }],
+          correct_option: 'A',
+          score: 4,
+        },
+      ],
+    });
+
+    assert.equal(remoteParseCalls, 0, '直接传入 questions 时不得再调服务端 /api/teacher/import/parse');
+    assert.equal(batch1.skippedRemoteParse, true);
+    assert.equal(batch1.appended, false);
+    assert.equal(batch1.draft.pages.length, 1);
+    assert.equal(batch1.draft.questions.length, 2);
+    assert.equal(batch1.draft.questions[0].exactMatchId, 'bank-q-101', '直接写入仍须执行题库查重');
+    assert.deepEqual(batch1.draft.questions[1].images, ['https://oss.test/uploads/mock-p1.png'], 'usePageImage 应自动绑定第 1 页原图');
+    assert.equal(batch1.draft.questions[1].flags.includes('missing_image'), false);
+
+    // Batch 2: append page 2 + Q25 multi-part problem to the SAME draft
+    const batch2 = await svc.ingest({
+      host: 'https://tiku.test',
+      token: 'tok',
+      userId: 'teacher-1',
+      appendToDraftId: batch1.draft.id,
+      files: [
+        { fileName: 'mock-p2.png', mimeType: 'image/png', bytesBase64: Buffer.from('p2').toString('base64') },
+      ],
+      questions: [
+        {
+          originalNo: '25',
+          sourcePage: 1, // relative to this batch's new page -> becomes page 2
+          usePageImage: true,
+          type: 'open-ended',
+          content: '如图，已知抛物线综合压轴题。',
+          correct_option: '见三小问解析',
+          score: 14,
+          parts: [
+            { id: 'p1', label: '(1)', prompt: '求解析式', score: 4, reference_answer: 'y=x^2-2x', rubric: '系数正确' },
+            { id: 'p2', label: '(2)', prompt: '求相似比', score: 5, reference_answer: '1:2', rubric: '证明相似' },
+            { id: 'p3', label: '(3)', prompt: '分类讨论面积', score: 5, reference_answer: '3 或 6', rubric: '不漏解' },
+          ],
+        },
+      ],
+    });
+
+    assert.equal(remoteParseCalls, 0);
+    assert.equal(batch2.appended, true);
+    assert.equal(batch2.appendedCount, 1);
+    assert.equal(batch2.appendedPageCount, 1);
+    assert.equal(batch2.draft.id, batch1.draft.id);
+    assert.equal(batch2.draft.revision, 2);
+    assert.equal(batch2.draft.pages.length, 2);
+    assert.equal(batch2.draft.pages[1].pageNo, 2);
+    assert.equal(batch2.draft.questions.length, 3);
+    assert.equal(batch2.draft.questions[2].originalNo, '25');
+    assert.equal(batch2.draft.questions[2].sourcePage, 2);
+    assert.deepEqual(batch2.draft.questions[2].images, ['https://oss.test/uploads/mock-p2.png']);
+    assert.equal(batch2.draft.questions[2].parts.length, 3);
+
+    // Batch 3: append without uploading new files, referencing existing page 2 directly
+    const batch3 = await svc.ingest({
+      host: 'https://tiku.test',
+      token: 'tok',
+      userId: 'teacher-1',
+      appendToDraftId: batch1.draft.id,
+      questions: [
+        {
+          originalNo: '26',
+          sourcePage: 2,
+          usePageImage: true,
+          type: 'open-ended',
+          content: '附加题：利用第 2 页图形求最值。',
+          correct_option: '8',
+          score: 10,
+        },
+      ],
+    });
+
+    assert.equal(batch3.draft.revision, 3);
+    assert.equal(batch3.draft.pages.length, 2);
+    assert.equal(batch3.draft.questions.length, 4);
+    assert.equal(batch3.draft.questions[3].sourcePage, 2);
+    assert.deepEqual(batch3.draft.questions[3].images, ['https://oss.test/uploads/mock-p2.png']);
+
+    // Publish merged paper as one exam + one targeted homework
+    const pub = await svc.executePublish({ host: 'https://tiku.test', token: 'tok', userId: 'teacher-1', draftId: batch1.draft.id });
+    assert.equal(pub.questionIds.length, 4);
+    assert.equal(state.createdExams.length, 1);
+    assert.equal(state.createdHomeworks.length, 1);
+    assert.equal(state.createdHomeworks[0].items.length, 4);
+
+    // Appending to an already-published draft must be rejected
+    await assert.rejects(
+      () => svc.ingest({
+        host: 'https://tiku.test',
+        token: 'tok',
+        userId: 'teacher-1',
+        appendToDraftId: batch1.draft.id,
+        questions: [{ content: '不应被追加的题目' }],
+      }),
+      /已发布，不能再追加/,
+    );
+  });
+
   console.log(`\nAll ${passed} paper-intake & layout checks passed.`);
 } finally {
   rmSync(tempRoot, { recursive: true, force: true });
