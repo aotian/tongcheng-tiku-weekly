@@ -23,7 +23,7 @@ jobs:
           node-version: '22'
       - run: node test/contract.mjs
       - run: node test/paper-intake.mjs
-      - run: node --test test/updater.mjs
+      - run: node --test test/updater.mjs test/paper-bank.mjs
 
   sync-gitee:
     if: github.event_name != 'pull_request'
@@ -48,6 +48,19 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             git push gitee "$GITHUB_REF:$GITHUB_REF"
           fi
+
+  windows-update-check:
+    needs: sync-gitee
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node test/check-published-update.mjs
 
   pack-tag:
     needs: test
