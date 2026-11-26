@@ -616,6 +616,43 @@ try {
     );
   });
 
+  await test('422 质量门明细经 HTTP 层传到 DSH，按整卷位置映射，并保留未匹配的错误', async () => {
+    const store = new PaperIntakeStore({ rootDir: join(tempRoot, 'quality') });
+    const { deps } = makeFakeBackend();
+    deps.writeImportDrafts = async () => ({ data: [{ id: 'second-new', sort_order: 2 }, { id: 'first-new', sort_order: 1 }] });
+    delete deps.commitImportJob;
+    const svc = new PaperIntakeService({ store, deps });
+    const args = { userId: 'teacher-1', host: 'https://tiku.test', token: 'tok' };
+    const image = 'https://images.example/page.jpg';
+    const { draft } = await svc.ingest({ ...args, title: '质检测试', classId: 'cls-sat-math', studentName: '李华',
+      dueDate: '2026-12-06T12:00:00.000Z', questions: [1, 2, 3].map(n => ({
+        originalNo: String(n), content: '计算第 ' + n + ' 题的结果', correct_option: '4', images: [image], target_knowledge_id: '101',
+      })) });
+    draft.questions[0].reuseQuestionId = 'existing';
+    store.save(args.userId, draft);
+    const fetchBefore = globalThis.fetch;
+    let calls = 0;
+    try {
+      globalThis.fetch = async url => {
+        assert.equal(new URL(url).pathname, '/api/teacher/import/commit');
+        calls++;
+        return Response.json({ error: '质量检查未通过', code: 'question_quality_gate_failed', issues: [
+          { draft_id: 'first-new', code: 'image_low_resolution', url: image, message: '774x1224 低于门槛' },
+          { draft_id: 'second-new', code: 'primary_knowledge_required', message: '缺少主考点' },
+          { draft_id: 'unknown', code: 'future_rule', message: '其他问题' },
+        ] }, { status: 422 });
+      };
+      const tool = createTools({ paperExecute: draftId => svc.executePublish({ ...args, draftId }) })
+        .find(t => t.name === 'tiku_weekly_paper_execute');
+      const { error } = await tool.execute({ draftId: draft.id });
+      assert.equal(error.status, 422);
+      assert.deepEqual(error.issues.map(i => [i.questionNumber, i.field]), [[2, 'images[0]'], [3, 'target_knowledge_id'], [null, null]]);
+      assert.match(error.message, /第 2 题 · images\[0\].*774x1224/);
+      assert.match(error.message, /草稿 unknown/);
+      assert.equal(calls, 1);
+    } finally { globalThis.fetch = fetchBefore; }
+  });
+
   console.log(`\nAll ${passed} paper-intake & layout checks passed.`);
 } finally {
   rmSync(tempRoot, { recursive: true, force: true });
