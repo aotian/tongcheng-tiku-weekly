@@ -48,3 +48,16 @@ test('教师工具只经 Tiku 访问 EDU、题库和远程上传接口', async t
   assert.equal(small.error.code, 'IMAGE_TOO_SMALL');
   assert.equal(small.error.issues[0].contentLength, 200);
 });
+
+test('线上历史填空题可绑定并通过预检，未知题型仍拦截', async () => {
+  const { canonicalQuestionType, bindingEvidence, preflight } = await import('../lib/paper-bank.js');
+  for (const type of ['fill_blank', 'fill', 'fill-in-blank', 'blank', 'unknown']) {
+    const q = { type, content: '1+1=?', correct_option: '2', score: 1, reuseQuestionId: 'q1' };
+    const bankRow = { ...q, id: 'q1', type: 'blank' };
+    const match = bindingEvidence(q, bankRow, 1, null, () => 1);
+    const report = await preflight({ bankRows: async () => [bankRow] }, {}, { questions: [q] });
+    assert.equal(report.ok, type !== 'unknown');
+    assert.equal(match.type, type !== 'unknown');
+    assert.equal(canonicalQuestionType(type), type === 'unknown' ? 'unknown' : 'blank');
+  }
+});
