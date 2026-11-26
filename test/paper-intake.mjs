@@ -56,6 +56,8 @@ function makeFakeBackend({ failHomeworkOnce = false } = {}) {
   ];
 
   const deps = {
+    bankRows: async ids => ids.map(id => ({ id, correct_option: '5/6' })),
+    imageMetadata: async url => ({ ok: true, url }),
     async parseDocument({ fileName }) {
       return {
         success: true,
@@ -651,6 +653,56 @@ try {
       assert.match(error.message, /草稿 unknown/);
       assert.equal(calls, 1);
     } finally { globalThis.fetch = fetchBefore; }
+  });
+
+  await test('25 题旧草稿整卷绑定、换图、预检、定向发布', async () => {
+    const { deps, state } = makeFakeBackend();
+    const ctx = { userId: 'teacher-1', host: 'https://tiku.test', token: 'fixture' };
+    const oldUrl = 'https://oss.test/old.png', newUrl = 'https://oss.test/new.png';
+    const questions = Array.from({ length: 25 }, (_, i) => ({
+      originalNo: String(i + 1), type: 'open-ended', score: 6, content: '计算 ' + i + ' 加 42',
+      correct_option: [13, 22, 24].includes(i) ? '待补（题库补录）' : String(i + 42),
+      images: i < 8 ? [oldUrl] : [], parts: [{ label: '甲', answer: '待核对' }, { label: '乙', answer: '待补' }],
+    }));
+    const rows = questions.map((q, i) => ({ ...q, images: [], id: 'bank-' + i, correct_option: String(i + 42),
+      parts: [{ label: '乙', answer: '乙答案' }, { label: '甲', answer: '甲答案' }] }));
+    deps.bankRows = async ids => rows.filter(q => ids.includes(q.id));
+    const store = new PaperIntakeStore({ rootDir: join(tempRoot, 'v311') });
+    const svc = new PaperIntakeService({ store, deps });
+    const { draft } = await svc.ingest({ ...ctx, questions, classId: 'cls-sat-math', title: '测试卷', studentName: '李华', dueDate: '2026-12-01' });
+    assert.equal(draft.totalScore, undefined);
+    const args = { draftId: draft.id };
+    const blocked = await svc.preflight(ctx, args);
+    assert.equal(blocked.code, 'PREFLIGHT_BLOCKED');
+    assert.deepEqual(blocked.errors.filter(e => e.field === 'correct_option').map(e => e.questionNumber), [14, 23, 25]);
+    await assert.rejects(svc.executePublish({ ...ctx, ...args }), { code: 'PREFLIGHT_BLOCKED' });
+    assert.equal(state.createdJobs.length, 0);
+    const bindings = rows.map((row, i) => ({ bankQuestionId: row.id, questionNumber: i + 1 }));
+    const wrong = { ...args, bindings: [bindings[0], { ...bindings[1], bankQuestionId: rows[5].id }] };
+    await assert.rejects(svc.bind(ctx, wrong), { code: 'BIND_CONFIDENCE_LOW' });
+    assert.equal(svc.requireDraft(ctx.userId, draft.id).questions[0].reuseQuestionId, null);
+    assert.equal((await svc.bind(ctx, { ...wrong, confirmLowConfidence: true, dryRun: true })).matches[1].confidence, 'low');
+    const bindArgs = { ...args, bindings, overwriteAnswers: true };
+    const first = await svc.bind(ctx, bindArgs);
+    assert.equal(first.matches.filter(m => m.confidence === 'high').length, 25);
+    assert.equal((await svc.bind(ctx, bindArgs)).revision, first.revision);
+    assert.deepEqual(svc.requireDraft(ctx.userId, draft.id).questions[13].parts.map(p => p.answer), ['甲答案', '乙答案']);
+    const replaced = svc.setImages(ctx, { ...args, oldUrl, questionNumbers: [1,2,3,4,5,6,7,8], images: [newUrl] });
+    assert.equal(replaced.remainingReferences[oldUrl], 0);
+    svc.updateMeta(ctx.userId, draft.id, { totalScore: 150 });
+    const originalLookup = deps.bankRows;
+    deps.bankRows = async ids => (await originalLookup(ids)).slice(1);
+    assert.equal((await svc.preflight(ctx, args)).errors[0].code, 'BANK_NOT_FOUND');
+    deps.bankRows = originalLookup;
+    svc.updateMeta(ctx.userId, draft.id, { totalScore: 149 });
+    assert.equal((await svc.preflight(ctx, args)).errors[0].field, 'totalScore');
+    svc.updateMeta(ctx.userId, draft.id, { totalScore: 150 });
+    const result = await svc.preflight(ctx, args);
+    assert.deepEqual([result.ok, result.reusedCount, result.newCount, result.totalScore, result.warnings.length], [true,25,0,150,1]);
+    const published = await svc.executePublish({ ...ctx, ...args });
+    assert.deepEqual([published.reusedQuestionCount, published.newQuestionCount, published.recipientCount], [25,0,1]);
+    await svc.executePublish({ ...ctx, ...args });
+    assert.deepEqual([state.createdJobs.length, state.commits.length, state.createdExams.length, state.createdHomeworks.length], [0,0,1,1]);
   });
 
   console.log(`\nAll ${passed} paper-intake & layout checks passed.`);
