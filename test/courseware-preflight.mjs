@@ -4,7 +4,7 @@
  *   node test/courseware-preflight.mjs
  */
 import assert from 'node:assert/strict';
-import { preflightMathCourse, renderCoursewarePair } from '../lib/courseware-v2.js';
+import { choiceGrade, preflightMathCourse, renderCoursewarePair } from '../lib/courseware-v2.js';
 import { WeeklyService } from '../lib/service.js';
 import { createTools } from '../lib/tools.js';
 
@@ -173,5 +173,89 @@ const sameWords = renderCoursewarePair({
 assert.equal(sameWords.issues.some((issue) => issue.code === 'STUDENT_ANSWER_LEAK'), false);
 assert.match(sameWords.studentHtml, /所以 \$x=2\$/);
 assert.doesNotMatch(sameWords.studentHtml, /教师讲稿只给老师/);
+
+const checks = renderCoursewarePair({
+  subject: 'math',
+  lessonKind: 'new_lesson',
+  title: '随堂判题键',
+  points: ['模型'],
+  formula: '$$x=2$$',
+  inlineCheck: {
+    prompt: '这一问选什么',
+    options: ['A. 甲', 'B. 乙', 'C. 丙', 'D. 丁'],
+    answer: 'C',
+  },
+  quickCheck: {
+    question: '再选一次',
+    options: ['A. 甲', 'B. 乙', 'C. 丙', 'D. 丁'],
+    answer: 'B',
+  },
+  example: {
+    title: '例 1',
+    problem: '求 $x$',
+    answer: '例题答案只给老师',
+    steps: [{ label: '推导', text: '由题意得 $x+1=3$，所以 $x=2$' }],
+  },
+});
+assert.equal(checks.issues.some((issue) => issue.code === 'STUDENT_ANSWER_LEAK'), false);
+assert.match(checks.studentHtml, /"answer":"C"/);
+assert.match(checks.studentHtml, /"answer":"B"/);
+assert.doesNotMatch(checks.studentHtml, /例题答案只给老师/);
+assert.match(checks.studentHtml, /function choiceGrade/);
+assert.match(checks.studentHtml, /回答有误，请再试一次/);
+assert.doesNotMatch(checks.studentHtml, /正确答案是 " \+ ic\.answer/);
+assert.doesNotMatch(checks.studentHtml, /正确答案是 " \+ slide\.answer/);
+assert.doesNotMatch(checks.studentHtml, /正确答案是 undefined/);
+const wrongPick = choiceGrade('A', 'C', '，看完解析即可继续。');
+assert.equal(wrongPick.correct, false);
+assert.equal(wrongPick.revealKey, 'C');
+assert.match(wrongPick.message, /正确答案是 C/);
+assert.doesNotMatch(wrongPick.message, /undefined/);
+for (const missing of [undefined, null, '']) {
+  const fallback = choiceGrade('B', missing, '，已展开三级讲解。');
+  assert.equal(fallback.revealKey, '');
+  assert.equal(fallback.message, '回答有误，请再试一次');
+  assert.doesNotMatch(fallback.message, /undefined/);
+}
+
+function hiddenCheck(answer) {
+  return renderCoursewarePair({
+    subject: 'math',
+    lessonKind: 'new_lesson',
+    title: '随堂判题键',
+    points: ['模型'],
+    formula: '$$x=2$$',
+    inlineCheck: { prompt: '填空', options: ['A. 甲', 'B. 乙'], answer },
+    quickCheck: { question: '再填一次', options: ['A. 甲', 'B. 乙'], answer },
+    example: {
+      title: '例 1',
+      problem: '求 $x$',
+      steps: [{ label: '推导', text: '由题意得 $x+1=3$，所以 $x=2$' }],
+    },
+  });
+}
+for (const answer of ['4', '0', '重力加速度']) {
+  const hidden = hiddenCheck(answer);
+  const needle = `"answer":${JSON.stringify(answer.toUpperCase())}`;
+  assert.equal(hidden.studentHtml.includes(needle), false, answer);
+  assert.equal(hidden.teacherHtml.includes(needle), true, answer);
+  assert.equal(hidden.issues.some((issue) => issue.code === 'STUDENT_ANSWER_LEAK'), false, answer);
+}
+const leftover = preflightMathCourse({
+  id: 'math',
+  subject: 'math',
+  lessonKind: 'new_lesson',
+  slides: [
+    { type: 'cover', stage: 'study' },
+    { type: 'kp-pitfall', stage: 'study', formula: '$$a=1$$', inlineCheck: { answer: '4' } },
+    { type: 'worked-example', stage: 'study', problem: '求 $x$', steps: [{ text: '所以 $x=2$' }] },
+    { type: 'quick-check', stage: 'study', answer: '0' },
+    { stage: 'entrance' },
+    { stage: 'exit' },
+  ],
+}, {
+  studentHtml: 'data-learning-only="true" data-stage-nav="false" const COURSE = {"answer":"4","answer":"0"};\n  const ROLE',
+});
+assert.equal(leftover.some((issue) => issue.code === 'STUDENT_ANSWER_LEAK'), true);
 
 console.log('courseware preflight dry_run checks passed');

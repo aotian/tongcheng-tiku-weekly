@@ -43,6 +43,7 @@ assert.equal(spec.course.slides.find((slide) => slide.id === 'handoff').nextTask
 
 const rendered = renderCoursewarePair(lesson);
 assert.doesNotMatch(rendered.teacherHtml, /body\[data-role="teacher"\] \.cw-three-dots \{ display:\s*none/);
+assert.match(rendered.teacherHtml, /body\[data-role="teacher"\]\[data-stage-nav="true"\] \.cw-three-dots \{ display: flex; \}/);
 assert.doesNotMatch(rendered.teacherHtml, /id="cw-mobile-auto"/);
 assert.match(rendered.teacherHtml, /data-stage-nav="true"/);
 assert.match(rendered.teacherHtml, /id="threeDots"/);
