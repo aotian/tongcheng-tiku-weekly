@@ -92,11 +92,15 @@ check('class_courses 挂课字段与契约一致', async () => {
   assert.deepEqual(last().body, { class_id: 'cl', course_id: 'co', plan_id: 'pl' });
 });
 
-check('add-lesson 用 POST + action 查询参数', async () => {
-  await addLesson(HOST, TOKEN, { chapterId: 'ch', topicId: 123, title: '课' });
-  const call = last();
-  assert.ok(call.url.endsWith('/api/teach-admin?action=add-lesson'), call.url);
-  assert.deepEqual(call.body, { chapterId: 'ch', topicId: 123, title: '课' });
+check('add-lesson 直接插入 lessons，不要求 topicId', async () => {
+  await addLesson(HOST, TOKEN, { chapterId: '297fc011-ea47-4f7a-8683-e817550d7b05', title: '第 1 课' });
+  const post = calls.filter((call) => call.method === 'POST' && call.url.includes('/rest/v1/lessons')).at(-1);
+  assert.ok(post.url.includes('/sb/rest/v1/lessons'), post.url);
+  assert.equal(post.headers.Prefer, 'return=representation');
+  assert.equal(post.headers['Content-Type'], 'application/json');
+  assert.deepEqual(post.body, { chapter_id: '297fc011-ea47-4f7a-8683-e817550d7b05', title: '第 1 课', order_no: 1 });
+  assert.equal(post.body.topicId, undefined);
+  await assert.rejects(() => addLesson(HOST, TOKEN, { chapterId: 'ch' }), /title/);
 });
 
 check('plans 创建与复制字段一致', async () => {
@@ -190,6 +194,65 @@ check('作业校验：定向必须选人、补交策略枚举、必须有题', (
   assert.throws(() => buildHomeworkBody({ title: 't', classId: 'c', dueDate: 'd', publishType: 'targeted', items: [{ questionId: 'q' }] }), /定向/);
   assert.throws(() => buildHomeworkBody({ title: 't', classId: 'c', dueDate: 'd', latePolicy: 'nope', items: [{ questionId: 'q' }] }), /补交策略/);
   assert.throws(() => buildHomeworkBody({ title: 't', classId: 'c', dueDate: 'd', items: [] }), /至少/);
+  const classBody = buildHomeworkBody({
+    title: 't', classId: 'c', dueDate: 'd', publishType: 'class', assignedTo: ['stu-1'], items: [{ questionId: 'q' }],
+  });
+  assert.equal(classBody.homework.publish_type, 'class');
+  assert.deepEqual(classBody.homework.assigned_to, []);
+  const publicBody = buildHomeworkBody({
+    title: 't', classId: 'c', dueDate: 'd', publishType: 'public', assignedTo: [], items: [{ questionId: 'q' }],
+  });
+  assert.equal(publicBody.homework.publish_type, 'public');
+  assert.deepEqual(publicBody.homework.assigned_to, []);
+});
+
+check('预演：全班作业 class 允许空名单，误传学生会被清空', () => {
+  const plan = compilePlan({
+    teacherId: 'u', host: HOST,
+    context: { classId: '36a06f4f-f92a-5166-8f19-8abd06d59286', courseId: 'f7690c12-c005-4740-b63d-57fcb1deaef1' },
+    step3: {
+      homework: {
+        title: '全班练习', dueDate: '2026-12-01T10:00:00Z', publishType: 'class', assignedTo: [],
+        items: [{ questionId: 'q1', score: 10 }],
+      },
+    },
+  });
+  assert.equal(plan.blocked.length, 0);
+  const step = plan.steps.find((item) => item.id === 'homework.create');
+  assert.equal(step.body.homework.publish_type, 'class');
+  assert.deepEqual(step.body.homework.assigned_to, []);
+  const warned = compilePlan({
+    teacherId: 'u', host: HOST,
+    context: { classId: '36a06f4f-f92a-5166-8f19-8abd06d59286' },
+    step3: {
+      homework: {
+        title: '全班练习', dueDate: '2026-12-01T10:00:00Z', publishType: 'class', assignedTo: ['stu-1'],
+        items: [{ questionId: 'q1', score: 10 }],
+      },
+    },
+  });
+  assert.deepEqual(warned.steps.find((item) => item.id === 'homework.create').body.homework.assigned_to, []);
+  assert.match(warned.warnings.join('\n'), /已清空/);
+});
+
+check('预演：已有章节的 lesson.add 带上 chapter_id', () => {
+  const chapterId = '297fc011-ea47-4f7a-8683-e817550d7b05';
+  const plan = compilePlan({
+    teacherId: 'u', host: HOST,
+    context: {
+      classId: '36a06f4f-f92a-5166-8f19-8abd06d59286',
+      courseId: 'f7690c12-c005-4740-b63d-57fcb1deaef1',
+    },
+    step1: { addLesson: { chapterId, title: '第 1 课' } },
+  });
+  const lesson = plan.steps.find((step) => step.id === 'lesson.add');
+  assert.equal(plan.blocked.length, 0);
+  assert.equal(lesson.method, 'POST');
+  assert.equal(lesson.pathname, '/sb/rest/v1/lessons');
+  assert.equal(lesson.body.chapter_id, chapterId);
+  assert.equal(lesson.body.title, '第 1 课');
+  assert.equal(lesson.body.order_no, 1);
+  assert.equal('topicId' in lesson.body, false);
 });
 
 check('任务链：整链互斥，单独允许，视频阶段校验', () => {
@@ -265,6 +328,8 @@ check('私有课件：>3MB 与 非 HTML 都被本地拦截', async () => {
   await uploadTeacherCourseware(HOST, TOKEN, { courseId: 'c', lessonId: 'l', topicId: 123, fileName: 'a.html', bytes: html, size: html.length });
   assert.deepEqual(Object.keys(last().body).sort(), ['content_base64', 'course_id', 'file_name', 'lesson_id', 'topic_id']);
   assert.equal(last().body.topic_id, '123');
+  assert.ok(last().url.endsWith('/api/teach-admin?action=courseware-upload'), last().url);
+  assert.equal(last().headers['Content-Type'], 'application/json');
 });
 
 check('预演：401 登录过期给出重新登录指引', async () => {
@@ -325,7 +390,8 @@ check('预演：新建课程时，依赖步骤用标记而不是假 ID', () => {
   const lesson = plan.steps.find((step) => step.id === 'lesson.add');
   assert.equal(chapter.body.course_id, '@course.create');
   assert.equal(chapter.meta.dependsOn, 'course.create');
-  assert.equal(lesson.body.chapterId, '@chapter.create');
+  assert.equal(lesson.body.chapter_id, '@chapter.create');
+  assert.equal(lesson.pathname, '/sb/rest/v1/lessons');
   assert.ok(!JSON.stringify(plan).includes('<courseId>'), '不应出现尖括号占位符');
 });
 

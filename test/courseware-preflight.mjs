@@ -4,7 +4,8 @@
  *   node test/courseware-preflight.mjs
  */
 import assert from 'node:assert/strict';
-import { choiceGrade, preflightMathCourse, renderCoursewarePair } from '../lib/courseware-v2.js';
+import { readFileSync } from 'node:fs';
+import { buildCourseSpec, choiceGrade, ENGLISH_TTS, preflightMathCourse, renderCoursewarePair } from '../lib/courseware-v2.js';
 import { WeeklyService } from '../lib/service.js';
 import { createTools } from '../lib/tools.js';
 
@@ -202,19 +203,22 @@ assert.match(checks.studentHtml, /"answer":"C"/);
 assert.match(checks.studentHtml, /"answer":"B"/);
 assert.doesNotMatch(checks.studentHtml, /例题答案只给老师/);
 assert.match(checks.studentHtml, /function choiceGrade/);
-assert.match(checks.studentHtml, /回答有误，请再试一次/);
+assert.match(checks.studentHtml, /已展开讲解，请对照自己的选择/);
 assert.doesNotMatch(checks.studentHtml, /正确答案是 " \+ ic\.answer/);
 assert.doesNotMatch(checks.studentHtml, /正确答案是 " \+ slide\.answer/);
 assert.doesNotMatch(checks.studentHtml, /正确答案是 undefined/);
 const wrongPick = choiceGrade('A', 'C', '，看完解析即可继续。');
+assert.equal(wrongPick.graded, true);
 assert.equal(wrongPick.correct, false);
 assert.equal(wrongPick.revealKey, 'C');
 assert.match(wrongPick.message, /正确答案是 C/);
 assert.doesNotMatch(wrongPick.message, /undefined/);
-for (const missing of [undefined, null, '']) {
+for (const missing of [undefined, null, '', '4']) {
   const fallback = choiceGrade('B', missing, '，已展开三级讲解。');
+  assert.equal(fallback.graded, false);
+  assert.equal(fallback.correct, false);
   assert.equal(fallback.revealKey, '');
-  assert.equal(fallback.message, '回答有误，请再试一次');
+  assert.equal(fallback.message, '已展开讲解，请对照自己的选择');
   assert.doesNotMatch(fallback.message, /undefined/);
 }
 
@@ -257,5 +261,73 @@ const leftover = preflightMathCourse({
   studentHtml: 'data-learning-only="true" data-stage-nav="false" const COURSE = {"answer":"4","answer":"0"};\n  const ROLE',
 });
 assert.equal(leftover.some((issue) => issue.code === 'STUDENT_ANSWER_LEAK'), true);
+
+const formula = '$\\left(a-1-\\dfrac{3}{a+1}\\right)\\div x$';
+const formulaLesson = renderCoursewarePair({
+  subject: 'math',
+  lessonKind: 'new_lesson',
+  title: '公式原样',
+  points: ['保持定界符'],
+  formula,
+  example: {
+    title: '例 1',
+    problem: '求 $x$',
+    steps: [{ label: '推导', text: '所以 $x=1$' }],
+  },
+});
+const storedFormula = buildCourseSpec({
+  subject: 'math',
+  lessonKind: 'new_lesson',
+  title: '公式原样',
+  points: ['保持定界符'],
+  formula,
+  example: {
+    title: '例 1',
+    problem: '求 $x$',
+    steps: [{ label: '推导', text: '所以 $x=1$' }],
+  },
+}).course.slides.find((slide) => slide.formula)?.formula;
+assert.equal(storedFormula, formula);
+assert.ok(formulaLesson.studentHtml.includes(JSON.stringify(formula).slice(1, -1)));
+assert.equal(formulaLesson.studentHtml.includes(JSON.stringify(`$$${formula}$$`).slice(1, -1)), false);
+assert.equal(formulaLesson.studentHtml.includes(JSON.stringify(formula.replace(/\\/g, '\\\\')).slice(1, -1)), false);
+assert.equal((formulaLesson.studentHtml.match(/@font-face/g) || []).length, 20);
+assert.match(formulaLesson.studentHtml, /\\neq|neq/);
+
+const unequal = renderCoursewarePair({
+  subject: 'math',
+  lessonKind: 'new_lesson',
+  title: '不等号',
+  points: ['字体'],
+  formula: '$$x \\neq 2$$',
+  example: {
+    title: '例 1',
+    problem: '判断 $x \\neq 2$',
+    steps: [{ label: '判断', text: '所以 $x \\neq 2$' }],
+  },
+});
+assert.equal((unequal.studentHtml.match(/@font-face/g) || []).length, 20);
+assert.match(unequal.studentHtml, /\\neq/);
+assert.equal((unequal.studentHtml.match(/font-family:KaTeX_Main/g) || []).length > 0, true);
+
+const english = renderCoursewarePair({
+  subject: 'eng',
+  title: 'Hello',
+  passageParagraphs: [{ en: 'Hello.', cn: '你好。' }],
+});
+assert.doesNotMatch(english.studentHtml, /en-GB|英式|英音/);
+assert.doesNotMatch(english.teacherHtml, /en-GB|英式|英音/);
+assert.match(english.studentHtml, /en-US/);
+assert.match(english.studentHtml, /美式朗读全文/);
+const pluginSource = [
+  readFileSync(new URL('../lib/courseware-v2.js', import.meta.url), 'utf8'),
+  readFileSync(new URL('../lib/tools.js', import.meta.url), 'utf8'),
+  readFileSync(new URL('../lib/teacher-page.js', import.meta.url), 'utf8'),
+].join('\n');
+assert.doesNotMatch(pluginSource, /en-GB|英式发音|英音/);
+assert.equal(ENGLISH_TTS.lang, 'en-US');
+assert.equal(ENGLISH_TTS.female, 'en-US-JennyNeural');
+assert.equal(ENGLISH_TTS.femaleAlt, 'en-US-AriaNeural');
+assert.equal(ENGLISH_TTS.male, 'en-US-GuyNeural');
 
 console.log('courseware preflight dry_run checks passed');
