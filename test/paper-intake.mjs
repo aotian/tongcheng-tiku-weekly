@@ -34,7 +34,7 @@ async function test(name, fn) {
   }
 }
 
-function makeFakeBackend({ failHomeworkOnce = false } = {}) {
+function makeFakeBackend({ failHomeworkOnce = false, failAttachExam = false } = {}) {
   const state = {
     createdJobs: [],
     writtenDrafts: [],
@@ -171,6 +171,9 @@ function makeFakeBackend({ failHomeworkOnce = false } = {}) {
       return { id, status: input.status };
     },
     async attachExamQuestions(examId, rows) {
+      if (failAttachExam) {
+        throw new Error('permission denied for table quiz_exam_snapshots');
+      }
       state.attachedExamQuestions.push({ examId, rows });
       return rows;
     },
@@ -380,6 +383,51 @@ try {
     assert.equal(secondClick.idempotent, true);
     assert.equal(secondClick.alreadyPublished, true);
     assert.equal(state.createdHomeworks.length, 1, '重复点击确认不得生成第二份作业');
+  });
+
+  await test('4b. 存档卷挂题失败仍发布定向作业，并写回作业 ID', async () => {
+    const store = new PaperIntakeStore({ rootDir: join(tempRoot, 't4b') });
+    const { state, deps } = makeFakeBackend({ failAttachExam: true });
+    const svc = new PaperIntakeService({ store, deps });
+
+    const { draft } = await svc.ingest({
+      host: 'https://tiku.test',
+      token: 'tok',
+      userId: 'teacher-1',
+      title: '分数运算专项练习',
+      subject: 'math',
+      classId: 'cls-sat-math',
+      className: '周六数学班',
+      studentName: '张同学',
+      dueDate: '2026-12-01T12:00:00.000Z',
+      targetKnowledgeId: 'kp-fraction-01',
+      files: [{ fileName: 'fraction.pdf', mimeType: 'application/pdf', bytesBase64: Buffer.from('%PDF').toString('base64') }],
+    });
+    svc.editQuestion('teacher-1', draft.id, { questionNumber: 1, patch: { reuseQuestionId: 'bank-q-101' } });
+    svc.editQuestion('teacher-1', draft.id, { questionNumber: 2, patch: { correct_option: '7/20' } });
+    await svc.resolveStudent({
+      host: 'https://tiku.test', token: 'tok', userId: 'teacher-1', draftId: draft.id,
+      classId: 'cls-sat-math', studentId: 'stu-zhang-1',
+    });
+
+    const published = await svc.executePublish({ host: 'https://tiku.test', token: 'tok', userId: 'teacher-1', draftId: draft.id });
+    assert.equal(published.archiveLinked, false);
+    assert.match(published.archiveError, /quiz_exam_snapshots/);
+    assert.equal(published.homeworkId, 'hw-1');
+    assert.equal(state.createdExams.length, 1);
+    assert.equal(state.attachedExamQuestions.length, 0);
+    assert.equal(state.createdHomeworks.length, 1);
+    assert.equal(state.createdHomeworks[0].description.includes('存档卷未挂上题目'), true);
+    const saved = store.load('teacher-1', draft.id);
+    assert.equal(saved.execution.status, 'done');
+    assert.equal(saved.execution.homeworkId, 'hw-1');
+    assert.equal(saved.execution.steps.archiveExam.status, 'failed');
+    assert.equal(saved.execution.steps.targetedHomework.status, 'ok');
+
+    const again = await svc.executePublish({ host: 'https://tiku.test', token: 'tok', userId: 'teacher-1', draftId: draft.id });
+    assert.equal(again.alreadyPublished, true);
+    assert.equal(state.createdHomeworks.length, 1);
+    assert.equal(state.createdExams.length, 1);
   });
 
   await test('5. Windows DSH 重叠修复与响应式布局静态契约检查', async () => {
@@ -749,6 +797,21 @@ try {
     assert.deepEqual([published.reusedQuestionCount, published.newQuestionCount, published.recipientCount], [25,0,1]);
     await svc.executePublish({ ...ctx, ...args });
     assert.deepEqual([state.createdJobs.length, state.commits.length, state.createdExams.length, state.createdHomeworks.length], [0,0,1,1]);
+  });
+
+  await test('同时保留两份录入草稿，打开其中一份不会删掉另一份', async () => {
+    const store = new PaperIntakeStore({ rootDir: join(tempRoot, 'multi') });
+    const { deps } = makeFakeBackend();
+    const svc = new PaperIntakeService({ store, deps });
+    const input = { host: 'https://tiku.test', token: 'tok', userId: 'teacher-1' };
+    const math = await svc.ingest({ ...input, title: '数学卷', subject: '数学', questions: [{ content: '1+1', type: 'blank', score: 4 }] });
+    const chem = await svc.ingest({ ...input, title: '化学卷', subject: '化学', questions: [{ content: 'H2O', type: 'blank', score: 4 }] });
+    assert.equal(store.list('teacher-1').length, 2);
+    assert.equal(store.getActiveId('teacher-1'), chem.draft.id);
+    assert.equal(store.activate('teacher-1', math.draft.id).title, '数学卷');
+    assert.equal(store.load('teacher-1', chem.draft.id).title, '化学卷');
+    assert.equal(store.load('teacher-1').id, math.draft.id);
+    assert.equal(store.list('teacher-1').length, 2);
   });
 
   console.log(`\nAll ${passed} paper-intake & layout checks passed.`);

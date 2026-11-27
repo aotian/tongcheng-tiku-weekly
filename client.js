@@ -23,10 +23,10 @@ window.__ModuleLoader__.load({
 
       panel: '每周课程',
       title: '童澄每周课程发布',
-      subtitle: '原卷录入校对、建课、课件、绑题与单生定向作业，对话与界面共用同一份草稿。',
+      subtitle: '原卷录入和课件都可以同时开多份。录入按草稿切换，课件按班级分开保存。',
       statusIdle: '未登录',
       openWizard: '打开完整向导',
-      openPaper: '打开当前校卷草稿',
+      openPaper: '打开录入草稿',
       hideWizard: '收起向导（保留草稿）',
       expandDock: '宽屏模式',
       compactDock: '分屏模式',
@@ -59,10 +59,10 @@ window.__ModuleLoader__.load({
 
       panel: 'Weekly courses',
       title: 'Tongcheng weekly course publishing',
-      subtitle: 'Paper intake & proofreading, courseware, questions, and targeted homework sharing one draft.',
+      subtitle: 'Several paper drafts and one courseware draft per class can stay open together.',
       statusIdle: 'Not signed in',
       openWizard: 'Open the full wizard',
-      openPaper: 'Open active paper draft',
+      openPaper: 'Open paper drafts',
       hideWizard: 'Hide wizard and keep draft',
       expandDock: 'Wide view',
       compactDock: 'Split view',
@@ -155,6 +155,7 @@ window.__ModuleLoader__.load({
     function WeeklyPage({ t }) {
       const [status, setStatus] = React.useState({ kind: 'loading' });
       const [paperDraft, setPaperDraft] = React.useState(null);
+      const [paperCount, setPaperCount] = React.useState(0);
       const [error, setError] = React.useState(null);
 
       const [update, setUpdate] = React.useState(null);
@@ -190,6 +191,7 @@ window.__ModuleLoader__.load({
             if (!st.ok) throw new Error(st.body?.message ?? st.body?.error ?? 'status failed');
             setStatus({ kind: 'ready', body: st.body });
             setPaperDraft(paper?.draft ?? null);
+            setPaperCount(Array.isArray(paper?.drafts) ? paper.drafts.length : (paper?.draft ? 1 : 0));
           })
           .catch((cause) => {
             setStatus({ kind: 'error' });
@@ -310,7 +312,7 @@ window.__ModuleLoader__.load({
           h('div', { key: 'btns', className: 'tkW_barBtns' }, [
             h('button', { key: 'reload', type: 'button', className: 'tkW_btn', onClick: load }, t('reload')),
             paperDraft
-              ? h('button', { key: 'paper', type: 'button', className: 'tkW_btn', onClick: () => openWizard('p0') }, `${t('openPaper')}（${paperDraft.title || ''}）`)
+              ? h('button', { key: 'paper', type: 'button', className: 'tkW_btn', onClick: () => openWizard('p0') }, `${t('openPaper')}（${paperCount || 1}）`)
               : null,
             h('button', { key: 'open', type: 'button', className: 'tkW_btn tkW_btnPrimary', onClick: () => openWizard(paperDraft ? 'p0' : '') }, t('openWizard')),
           ]),

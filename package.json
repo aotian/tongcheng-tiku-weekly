@@ -1,6 +1,6 @@
 {
   "name": "tongcheng-tiku-weekly",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "type": "module",
   "description": "童澄每周课程发布与课件制作助手：建课、排课次、全科统一 v2.1 双版课件、原卷录入单生定向、随堂绑题、作业 v2、考试与任务链，带发布前预演。",
   "exports": {
