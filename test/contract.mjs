@@ -235,6 +235,96 @@ check('预演：全班作业 class 允许空名单，误传学生会被清空', 
   assert.match(warned.warnings.join('\n'), /已清空/);
 });
 
+check('作业预演保留全部题目，第 4 题不再从请求预览里消失', () => {
+  const fourth = '850045d0-96ab-4161-b855-633af4e417f5';
+  const plan = compilePlan({
+    teacherId: 'u', host: HOST,
+    context: { classId: 'class-eng' },
+    step3: {
+      homework: {
+        title: 'Unit 9 What time is it? · 一课一练出门清',
+        publishType: 'class',
+        assignedTo: [],
+        status: 'published',
+        subject: '英语',
+        dueDate: '2026-12-04T23:59:59+08:00',
+        latePolicy: 'closed',
+        items: [
+          { itemType: 'question', questionId: '79c97bbd-b892-4b11-83df-920479e0ea0e', score: 9, orderIndex: 0, isRequired: true, title: '听力选择与判断' },
+          { itemType: 'question', questionId: 'a47a926a-2542-4087-85a5-33d7e5475d4a', score: 4, orderIndex: 1, isRequired: true, title: '发音辨析 qu / h' },
+          { itemType: 'question', questionId: '87da4d4d-515f-4292-a4e0-6d80982d11f3', score: 6, orderIndex: 2, isRequired: true, title: '首字母填空 What is time?' },
+          { itemType: 'question', questionId: fourth, score: 6, orderIndex: 3, isRequired: true, title: '认表报时' },
+        ],
+      },
+    },
+  });
+  const step = plan.steps.find((item) => item.id === 'homework.create');
+  assert.equal(step.body.items.length, 4);
+  assert.equal(step.preview.items.length, 4);
+  assert.deepEqual(step.preview.items.map((item) => item.question_id), step.body.items.map((item) => item.question_id));
+  assert.equal(step.preview.items[3].question_id, fourth);
+  assert.equal(step.preview.items[3].title, '认表报时');
+  assert.equal(step.meta.note, '共 4 题，总分 25');
+  assert.deepEqual(step.body.items.map((item) => item.order_index), [0, 1, 2, 3]);
+  assert.equal(step.body.items.reduce((sum, item) => sum + item.score, 0), 25);
+});
+
+check('choice / blank / judge / open-ended 都进入作业请求体，丢项抛 ITEMS_DROPPED', () => {
+  const body = buildHomeworkBody({
+    title: '题型混排', classId: 'C', dueDate: '2026-12-04T23:59:59+08:00', publishType: 'public',
+    items: [
+      { itemType: 'question', questionId: 'q-choice', score: 2, orderIndex: 0, type: 'choice' },
+      { itemType: 'question', questionId: 'q-blank', score: 3, orderIndex: 1, type: 'blank' },
+      { itemType: 'question', questionId: 'q-judge', score: 4, orderIndex: 2, type: 'judge' },
+      { itemType: 'question', questionId: 'q-open', score: 5, orderIndex: 3, type: 'open-ended' },
+    ],
+  });
+  assert.deepEqual(body.items.map((item) => item.question_id), ['q-choice', 'q-blank', 'q-judge', 'q-open']);
+  assert.throws(() => buildHomeworkBody({
+    title: '题型混排', classId: 'C', dueDate: '2026-12-04T23:59:59+08:00', publishType: 'targeted', assignedTo: ['stu-1'],
+    items: [
+      { questionId: 'q-choice', score: 2, type: 'choice' },
+      null,
+      { questionId: 'q-blank', score: 3, type: 'blank' },
+    ],
+  }), { code: 'ITEMS_DROPPED' });
+  assert.throws(() => buildHomeworkBody({
+    title: '题型混排', classId: 'C', dueDate: '2026-12-04T23:59:59+08:00', publishType: 'class',
+    items: [{ questionId: 'kept', score: 1 }, undefined],
+  }), (error) => error.code === 'ITEMS_DROPPED' && /第 2 项/.test(error.message));
+});
+
+check('step2.skipUpload 与 mode=keep 不编译课件步骤', () => {
+  const step2 = {
+    skipUpload: true,
+    student: { fileName: 'student.html', contentType: 'text/html', size: 12 },
+    teacher: { fileName: 'teacher.html', contentType: 'text/html', size: 12 },
+    lessonTitle: 'Unit 9',
+  };
+  const homework = {
+    title: '只发作业', dueDate: '2026-12-04T23:59:59+08:00', publishType: 'class', assignedTo: [],
+    items: [{ questionId: 'q1', score: 5 }],
+  };
+  const skipped = compilePlan({
+    teacherId: 'u', host: HOST, context: { classId: 'class-eng', lessonId: 'lesson-1' },
+    step2, step3: { homework },
+  });
+  assert.equal(skipped.steps.some((step) => step.id.startsWith('courseware.')), false);
+  assert.equal(skipped.steps.some((step) => step.id === 'homework.create'), true);
+  assert.match(skipped.warnings.join('\n'), /本次不更新课件/);
+  assert.equal(skipped.digest.step2, '本次不更新课件');
+  const kept = compilePlan({
+    teacherId: 'u', host: HOST, context: { classId: 'class-eng', lessonId: 'lesson-1' },
+    step2: { ...step2, skipUpload: false, mode: 'keep' }, step3: { homework },
+  });
+  assert.equal(kept.steps.some((step) => step.id.startsWith('courseware.')), false);
+  const uploaded = compilePlan({
+    teacherId: 'u', host: HOST, context: { classId: 'class-eng', lessonId: 'lesson-1', courseId: 'course-1' },
+    step2: { student: step2.student, coursewareTopicId: 12 }, step3: { homework },
+  });
+  assert.equal(uploaded.steps.some((step) => step.id === 'courseware.student'), true);
+});
+
 check('预演：已有章节的 lesson.add 带上 chapter_id', () => {
   const chapterId = '297fc011-ea47-4f7a-8683-e817550d7b05';
   const plan = compilePlan({

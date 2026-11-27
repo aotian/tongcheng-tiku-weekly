@@ -159,6 +159,12 @@ function makeFakeBackend({ failHomeworkOnce = false, failAttachExam = false } = 
         taxonomy_version: 'test-v1', kg_code: `TEST-${id}`,
       }));
     },
+    async coordinateQueueEnabled(queue) {
+      return queue.subject === '数学'
+        && ['七年级', '八年级', '九年级'].includes(queue.grade)
+        && queue.term === '秋季'
+        && queue.track === 'school';
+    },
     async commitImportJob(payload) {
       const last = state.writtenDrafts[state.writtenDrafts.length - 1];
       const question_ids = (last?.drafts ?? []).map((_, i) => `real-q-${state.commits.length + 1}-${i + 1}`);
@@ -710,6 +716,31 @@ try {
       { code: 'IMPORT_COORDINATE_REQUIRED' },
     );
     assert.equal(state.createdJobs.length, 1);
+  });
+
+  await test('未开通坐标的物理和小学英语预检不拦截，交给后台记 unmapped', async () => {
+    const store = new PaperIntakeStore({ rootDir: join(tempRoot, 'unmapped-subjects') });
+    const { state, deps } = makeFakeBackend();
+    const svc = new PaperIntakeService({ store, deps });
+    const cases = [
+      { subject: '物理', className: '2026 秋季 9年级 物理', grade: '九年级' },
+      { subject: '英语', className: '2026 秋季 4年级 英语', grade: '四年级' },
+    ];
+    for (const item of cases) {
+      const input = {
+        host: 'https://tiku.test', token: 'tok', userId: 'teacher-1', classId: 'cls-open',
+        subject: item.subject, className: item.className, studentName: '李华', dueDate: '2026-12-06T12:00:00.000Z',
+      };
+      const { draft } = await svc.ingest({
+        ...input, title: item.subject + '卷',
+        questions: [{ content: item.subject + ' 一题', correct_option: 'A', score: 2, target_knowledge_id: '88001', type: 'blank' }],
+      });
+      const check = await svc.preflight(input, { draftId: draft.id });
+      assert.equal(check.ok, true, item.subject);
+      await svc.executePublish({ ...input, draftId: draft.id });
+      assert.equal(state.writtenDrafts.at(-1).drafts[0].question_payload.import_coordinate.tag_status, 'unmapped');
+      assert.equal(state.writtenDrafts.at(-1).drafts[0].question_payload.import_coordinate.grade, item.grade);
+    }
   });
 
   await test('422 质量门明细经 HTTP 层传到 DSH，按整卷位置映射，并保留未匹配的错误', async () => {
