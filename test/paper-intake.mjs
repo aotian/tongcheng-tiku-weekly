@@ -153,6 +153,12 @@ function makeFakeBackend({ failHomeworkOnce = false } = {}) {
       state.writtenDrafts.push(payload);
       return { success: true, data: payload.drafts };
     },
+    async listImportCoordinates(nodeIds) {
+      return nodeIds.map((id) => ({
+        node_id: String(id), subject: '数学', grade: '九年级', term: '秋季', track: 'school',
+        taxonomy_version: 'test-v1', kg_code: `TEST-${id}`,
+      }));
+    },
     async commitImportJob(payload) {
       const last = state.writtenDrafts[state.writtenDrafts.length - 1];
       const question_ids = (last?.drafts ?? []).map((_, i) => `real-q-${state.commits.length + 1}-${i + 1}`);
@@ -616,6 +622,46 @@ try {
       ['101', '102'],
       '入库草稿应保留每道题各自的 target_knowledge_id',
     );
+    assert.deepEqual(
+      state.writtenDrafts[0].drafts.map((d) => d.question_payload.import_coordinate.kg_code),
+      ['TEST-101', 'TEST-102'],
+    );
+    assert.equal(state.writtenDrafts[0].drafts[0].question_payload.import_coordinate.node_id, '101');
+  });
+
+  await test('入库前按知识点选择唯一已启用坐标，缺失时不创建导入任务', async () => {
+    const store = new PaperIntakeStore({ rootDir: join(tempRoot, 'coordinate') });
+    const { state, deps } = makeFakeBackend();
+    deps.listImportCoordinates = async (ids) => ids.flatMap((id) => (
+      id === '101'
+        ? [
+          { node_id: id, subject: '数学', grade: '八年级', term: '秋季', track: 'school', taxonomy_version: 'g8', kg_code: 'G8' },
+          { node_id: id, subject: '数学', grade: '九年级', term: '秋季', track: 'school', taxonomy_version: 'g9', kg_code: 'G9' },
+        ]
+        : []
+    ));
+    const svc = new PaperIntakeService({ store, deps });
+    const input = {
+      host: 'https://tiku.test', token: 'tok', userId: 'teacher-1', classId: 'cls-sat-math',
+      className: '2026 秋季 9年级 数学', subject: '数学', studentName: '李华', dueDate: '2026-12-06T12:00:00.000Z',
+    };
+    const ready = await svc.ingest({
+      ...input, title: '坐标可确定',
+      questions: [{ content: '求相似三角形的周长比。', correct_option: '4:3', target_knowledge_id: '101' }],
+    });
+    await svc.executePublish({ ...input, draftId: ready.draft.id });
+    assert.equal(state.writtenDrafts[0].drafts[0].question_payload.import_coordinate.kg_code, 'G9');
+    assert.equal(state.createdJobs.length, 1);
+
+    const blocked = await svc.ingest({
+      ...input, title: '坐标缺失',
+      questions: [{ content: '求二次函数顶点。', correct_option: '(1,-1)', target_knowledge_id: '102' }],
+    });
+    await assert.rejects(
+      svc.executePublish({ ...input, draftId: blocked.draft.id }),
+      { code: 'IMPORT_COORDINATE_REQUIRED' },
+    );
+    assert.equal(state.createdJobs.length, 1);
   });
 
   await test('422 质量门明细经 HTTP 层传到 DSH，按整卷位置映射，并保留未匹配的错误', async () => {
