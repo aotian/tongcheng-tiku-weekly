@@ -232,6 +232,7 @@ body.view-mobile .cw-shell::before { width: 4px; }
 /* 老师版专属：顶栏三珠进度（前两颗童澄黄 #FFD110，第三颗童澄橙 #FF790B） */
 .cw-three-dots { display: flex; align-items: center; gap: 6px; }
 [data-role="student"] .cw-three-dots { display: none; }
+body[data-role="teacher"][data-stage-nav="true"] .cw-three-dots { display: flex; }
 .stage-bead {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px; border-radius: 999px;
@@ -398,6 +399,40 @@ body.view-mobile .cw-shell::before { width: 4px; }
 .self-check-tip {
   background: var(--tc-ok-soft); border-left: 4px solid var(--tc-ok);
   border-radius: 10px; padding: 11px 16px; font-size: 14.5px; color: #14532D;
+}
+
+/* 例题原卷图 */
+.example-figures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.example-figures.count-1 { grid-template-columns: minmax(0, 1fr); }
+.sq-block { display: flex; flex-direction: column; gap: 8px; font-size: 15px; line-height: 1.65; }
+.answer-card {
+  background: var(--tc-warn-soft);
+  border-left: 4px solid var(--tc-warn);
+  border-radius: 10px;
+  padding: 11px 16px;
+}
+.example-figure {
+  margin: 0;
+  background: #fff;
+  border: 1px solid var(--tc-orange-line);
+  border-radius: 10px;
+  padding: 8px;
+}
+.example-figure img {
+  width: 100%;
+  height: auto;
+  display: block;
+  object-fit: contain;
+}
+.example-figure figcaption {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--tc-muted);
+  line-height: 1.5;
 }
 
 /* 例题逐步展开 */
@@ -618,7 +653,7 @@ body.view-mobile .cw-shell::before { width: 4px; }
 body.view-mobile .cw-header { padding: 0 14px; height: 56px; }
 body.view-mobile .cw-logo { height: 24px; }
 body.view-mobile .cw-course-name { font-size: 14px; }
-body.view-mobile .cw-three-dots, body.view-mobile .cw-student-seg, body.view-mobile .cw-subj-dot { display: none !important; }
+body.view-mobile .cw-student-seg, body.view-mobile .cw-subj-dot { display: none !important; }
 body.view-mobile .cw-main { padding: 16px 16px 14px 18px; }
 body.view-mobile .slide-title { font-size: 21px; }
 body.view-mobile .cover-grid,
@@ -629,6 +664,24 @@ body.view-mobile .word-grid { grid-template-columns: repeat(2, 1fr); }
 body.view-mobile .cover-h1 { font-size: 26px; }
 body.view-mobile .handoff-box,
 body.view-mobile .py-lab-banner { flex-direction: column; align-items: flex-start; }
+
+/* 真机窄屏单栏。不使用 view-mobile：那个类是老师预览用的手机外壳。 */
+@media (max-width: 860px) {
+  .cw-viewport { padding: 8px; }
+  .cw-shell { aspect-ratio: auto; min-height: 0; height: auto; }
+  .cw-header { padding: 0 14px; height: 56px; }
+  .cw-main { padding: 16px 14px 14px; }
+  .cover-grid,
+  .two-col,
+  .math-lab-grid,
+  .quiz-opts,
+  .example-figures { grid-template-columns: 1fr; }
+  .cover-grid > *,
+  .flow-item > div { min-width: 0; }
+  .cover-h1 { font-size: 26px; }
+  .slide-title { font-size: 21px; }
+  .word-grid { grid-template-columns: repeat(2, 1fr); }
+}
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
